@@ -1,0 +1,54 @@
+name: land
+description: Run only the tests a change can reach. Commands whose recorded reads did not change are carried from main, on GitHub's own runner, with no account.
+branding:
+  icon: check-circle
+  color: blue
+inputs:
+  run:
+    description: |
+      Your test commands, one per line. Optionally name them, as `name: command`.
+      Each line is recorded on its own, so split a big suite into a few lines to carry more.
+    required: true
+  main:
+    description: The branch whose green runs record what each command read (only its runs save the record)
+    default: ${{ github.event.repository.default_branch }}
+  working-directory:
+    description: Where the commands run, relative to the repository root
+    default: .
+outputs:
+  ran:
+    description: How many commands ran
+    value: ${{ steps.check.outputs.ran }}
+  carried:
+    description: How many commands were carried from main without running
+    value: ${{ steps.check.outputs.carried }}
+runs:
+  using: composite
+  steps:
+    - name: land · prepare
+      shell: bash
+      env:
+        RUN_LINES: ${{ inputs.run }}
+        WD: ${{ inputs.working-directory }}
+        BASE_PR: ${{ github.event.pull_request.base.sha }}
+        BASE_PUSH: ${{ github.event.before }}
+      run: python3 "${{ github.action_path }}/land.py" prepare
+    - name: land · restore the record
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/land-state
+        key: land-state-${{ inputs.main }}-${{ github.sha }}
+        restore-keys: land-state-${{ inputs.main }}-
+    - name: land · check
+      id: check
+      shell: bash
+      env:
+        LAND_MAIN: ${{ inputs.main }}
+        LAND_BIN: ${{ github.action_path }}/bin/inspect
+      run: python3 "${{ github.action_path }}/land.py" check
+    - name: land · save the record (green runs on main only)
+      if: steps.check.outputs.save == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/land-state
+        key: land-state-${{ inputs.main }}-${{ github.sha }}
