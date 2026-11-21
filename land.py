@@ -21,6 +21,19 @@ def out(k, v):
             f.write(f"{k}={v}\n")
 
 
+def gitlab_user():
+    """GitLab jobs run as root. Tests run as root write into system folders (Python's __pycache__ under /usr/local)
+    and the next command reads what the last one wrote, so nothing could be carried. Run them as an ordinary user
+    that owns the checkout, as GitHub's runner user does: it can read every system package, and write only its own."""
+    import pwd
+    try:
+        u = pwd.getpwnam("land")
+    except KeyError:
+        sh("useradd", "-m", "-s", "/bin/bash", "land", capture_output=True)
+        u = pwd.getpwnam("land")
+    return u
+
+
 def prepare():
     # the units: one per line, `name: command` or a bare command
     units = {}
@@ -34,6 +47,8 @@ def prepare():
         # the job's own toolchain: the commands see what the workflow's earlier steps installed
         env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "PYTHONPATH", "VIRTUAL_ENV", "pythonLocation", "GOPATH", "GOROOT",
                "CARGO_HOME", "RUSTUP_HOME", "JAVA_HOME", "NODE_PATH", "CI") if os.environ.get(k)}
+        if GITLAB:
+            env["HOME"] = "/home/land"
         units[name] = {"command": cmd, "env": env}
     if not units:
         sys.exit("land: `run` names no command")
@@ -50,6 +65,10 @@ def prepare():
     if sh("git", "-C", WS, "cat-file", "-e", base + "^{commit}", check=False, capture_output=True).returncode:
         sh("git", "-C", WS, "fetch", "--no-tags", "--depth=1", "origin", base)
     sh("git", "-C", WS, "worktree", "add", "--detach", "-f", BASE, base, capture_output=True)
+    if GITLAB:
+        u = gitlab_user()
+        for d in (WS, BASE):
+            sh("chown", "-R", f"{u.pw_uid}:{u.pw_gid}", d)
     print(f"land: {len(units)} command(s), checked against {base[:12]}")
 
 
@@ -60,7 +79,12 @@ def check():
     # GitHub: the recorder needs root (sudo) and the commands run as the runner user. GitLab: the job is already
     # root in a privileged container, and the commands run as the job does
     pre = [] if GITLAB else ["sudo", "env", *keep]
-    wrap = [] if GITLAB else ["--wrap", f"setpriv --reuid={os.getuid()} --regid={os.getgid()} --init-groups bash -c"]
+    if GITLAB:
+        u = gitlab_user()
+        uid, gid = u.pw_uid, u.pw_gid
+    else:
+        uid, gid = os.getuid(), os.getgid()
+    wrap = ["--wrap", f"setpriv --reuid={uid} --regid={gid} --init-groups bash -c"]
     cmd = [*pre, binp, "check", "--base", BASE, "--cand", WS,
            "--state", STATE, "--units-file", UNITS, "--sensor", "bpf", "--json", *wrap]
     p = subprocess.run(cmd, text=True, capture_output=True)
