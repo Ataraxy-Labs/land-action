@@ -3,9 +3,11 @@ are unchanged since main's last green run. Any doubt (no record yet, a recorder 
 command that touched the network) means the command runs."""
 import json, os, re, subprocess, sys
 
+GITLAB = bool(os.environ.get("GITLAB_CI"))
 T = os.environ.get("RUNNER_TEMP", "/tmp")
 STATE, BASE, UNITS, OUT = (os.path.join(T, n) for n in ("land-state", "land-base", "land-units.json", "land-out.json"))
-WS = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
+WS = os.environ.get("GITHUB_WORKSPACE") or os.environ.get("CI_PROJECT_DIR") or os.getcwd()
+CACHE = os.path.join(WS, ".land-cache")
 
 
 def sh(*a, check=True, **k):
@@ -13,8 +15,10 @@ def sh(*a, check=True, **k):
 
 
 def out(k, v):
-    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write(f"{k}={v}\n")
+    # GitHub reads step outputs from GITHUB_OUTPUT; on GitLab the job's exit code is the only output
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"{k}={v}\n")
 
 
 def prepare():
@@ -35,8 +39,12 @@ def prepare():
         sys.exit("land: `run` names no command")
     json.dump(units, open(UNITS, "w"))
     os.makedirs(STATE, exist_ok=True)
+    if GITLAB and os.path.isdir(CACHE):
+        # GitLab restores its cache inside the project; the record itself lives outside the tree under test
+        sh("cp", "-a", CACHE + "/.", STATE)
     # the base: the PR's base, or the commit this push came after; a first run checks against itself
-    base = os.environ.get("BASE_PR") or os.environ.get("BASE_PUSH") or ""
+    base = (os.environ.get("BASE_PR") or os.environ.get("BASE_PUSH")
+            or os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or os.environ.get("CI_COMMIT_BEFORE_SHA") or "")
     if not base or set(base) == {"0"}:
         base = sh("git", "-C", WS, "rev-parse", "HEAD", capture_output=True).stdout.strip()
     if sh("git", "-C", WS, "cat-file", "-e", base + "^{commit}", check=False, capture_output=True).returncode:
@@ -49,13 +57,16 @@ def check():
     binp = os.environ["LAND_BIN"]
     os.chmod(binp, 0o755)
     keep = [f"{k}={os.environ[k]}" for k in ("PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "GOPATH", "CARGO_HOME", "RUSTUP_HOME", "JAVA_HOME") if os.environ.get(k)]
-    cmd = ["sudo", "env", *keep, binp, "check", "--base", BASE, "--cand", WS,
-           "--state", STATE, "--units-file", UNITS, "--sensor", "bpf", "--json",
-           # the recorder needs root; the commands run as the runner user, so they see its toolchain and packages
-           "--wrap", f"setpriv --reuid={os.getuid()} --regid={os.getgid()} --init-groups bash -c"]
+    # GitHub: the recorder needs root (sudo) and the commands run as the runner user. GitLab: the job is already
+    # root in a privileged container, and the commands run as the job does
+    pre = [] if GITLAB else ["sudo", "env", *keep]
+    wrap = [] if GITLAB else ["--wrap", f"setpriv --reuid={os.getuid()} --regid={os.getgid()} --init-groups bash -c"]
+    cmd = [*pre, binp, "check", "--base", BASE, "--cand", WS,
+           "--state", STATE, "--units-file", UNITS, "--sensor", "bpf", "--json", *wrap]
     p = subprocess.run(cmd, text=True, capture_output=True)
     sys.stderr.write(p.stderr[-20000:])
-    sh("sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", STATE, check=False)
+    if not GITLAB:
+        sh("sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", STATE, check=False)
     said = {}
     for line in reversed(p.stdout.splitlines()):
         if line.startswith("{"):
@@ -68,12 +79,18 @@ def check():
     failing = sorted(n for n, v in (said.get("verdicts") or {}).items() if v == "failed")
     rc = p.returncode if p.returncode not in (0,) else (1 if failing else 0)
     summary(said, rc)
-    branch = os.environ.get("GITHUB_REF_NAME", "")
-    on_main = os.environ.get("GITHUB_EVENT_NAME") == "push" and branch == os.environ.get("LAND_MAIN")
+    if GITLAB:
+        on_main = os.environ.get("CI_PIPELINE_SOURCE") == "push" and os.environ.get("CI_COMMIT_BRANCH") == os.environ.get("CI_DEFAULT_BRANCH")
+    else:
+        on_main = os.environ.get("GITHUB_EVENT_NAME") == "push" and os.environ.get("GITHUB_REF_NAME", "") == os.environ.get("LAND_MAIN")
     out("save", "true" if (on_main and rc == 0) else "false")
+    if GITLAB and on_main and rc == 0:
+        # only a green run on the default branch writes the record the next pipelines carry from
+        sh("rm", "-rf", CACHE)
+        sh("cp", "-a", STATE, CACHE)
     if rc not in (0, 1):
         print(p.stdout[-4000:])
-    for n in failing:
+    for n in failing if not GITLAB else []:
         print(f"::error title=land: {n} failed::" + (said.get("failed_text") or {}).get(n, "")[-1500:].replace("\n", "%0A"))
     sys.exit(rc)
 
@@ -103,7 +120,9 @@ def summary(said, rc):
         lines += ["", f"<details><summary>{n.replace('suite::', '')} output</summary>", "", "```", t[-6000:], "```", "</details>"]
     lines += ["", "Commands are carried only when every file they read on main's last green run is unchanged. "
               "[How land decides](https://docs.useland.dev/fast)"]
-    with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+    # GitHub shows the step summary on the run; GitLab keeps land-summary.md as the job's artifact
+    dest = os.environ.get("GITHUB_STEP_SUMMARY") or os.path.join(WS, "land-summary.md")
+    with open(dest, "a") as f:
         f.write("\n".join(lines) + "\n")
     print(f"land: {head}. ran {ran}, carried {carried}")
     for n in sorted(verdicts):
