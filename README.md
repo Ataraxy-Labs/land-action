@@ -56,3 +56,24 @@ recorder does not see: use `actions/setup-python` or install system-wide.
 
 The same recorder powers [land](https://useland.dev): faster machines, environments built once and kept warm, and
 merging several agents' branches with one test run. 500 minutes a month free.
+
+## GitLab CI
+
+The same recorder runs on GitLab.com's hosted Linux runners. In `.gitlab-ci.yml`:
+
+```yaml
+include:
+  - remote: https://raw.githubusercontent.com/Ataraxy-Labs/land-action/v1/gitlab/land.gitlab-ci.yml
+
+land:
+  extends: .land
+  image: python:3.12          # any Debian or Ubuntu image with your toolchain
+  before_script:
+    - pip install -r requirements-dev.txt
+  variables:
+    LAND_RUN: |
+      core: python -m pytest -q tests/core
+      api: python -m pytest -q tests/api
+```
+
+The record lives in GitLab's cache and only a green pipeline on the default branch writes it; merge request pipelines carry from it. Commands run as an ordinary user that owns the checkout, so install packages system-wide in `before_script`. The summary is saved with the job as `land-summary.md`. The job needs a privileged runner, which GitLab.com's hosted runners are; on your own runners set `privileged = true`.
