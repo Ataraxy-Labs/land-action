@@ -8,6 +8,7 @@ T = os.environ.get("RUNNER_TEMP", "/tmp")
 STATE, BASE, UNITS, OUT = (os.path.join(T, n) for n in ("land-state", "land-base", "land-units.json", "land-out.json"))
 WS = os.environ.get("GITHUB_WORKSPACE") or os.environ.get("CI_PROJECT_DIR") or os.getcwd()
 CACHE = os.path.join(WS, ".land-cache")
+ORIG = os.path.join(T, "land-cache-orig")
 
 
 def sh(*a, check=True, **k):
@@ -60,6 +61,7 @@ def prepare():
     if GITLAB and os.path.isdir(CACHE):
         # GitLab restores its cache inside the project; the record itself lives outside the tree under test
         sh("cp", "-a", CACHE + "/.", STATE)
+        sh("cp", "-a", CACHE, ORIG)
         # and out of the checkout: a test that lists the project root must see the same entries as on main
         sh("rm", "-rf", CACHE)
     # the base: the PR's base, or the commit this push came after; a first run checks against itself
@@ -115,10 +117,14 @@ def check():
     else:
         on_main = os.environ.get("GITHUB_EVENT_NAME") == "push" and os.environ.get("GITHUB_REF_NAME", "") == os.environ.get("LAND_MAIN")
     out("save", "true" if (on_main and rc == 0) else "false")
-    if GITLAB and on_main and rc == 0:
-        # only a green run on the default branch writes the record the next pipelines carry from
+    if GITLAB:
+        # only a green run on the default branch writes the record the next pipelines carry from; every other job
+        # hands GitLab back exactly the record it restored
         sh("rm", "-rf", CACHE)
-        sh("cp", "-a", STATE, CACHE)
+        if on_main and rc == 0:
+            sh("cp", "-a", STATE, CACHE)
+        elif os.path.isdir(ORIG):
+            sh("cp", "-a", ORIG, CACHE)
     if rc not in (0, 1):
         print(p.stdout[-4000:])
     for n in failing if not GITLAB else []:
