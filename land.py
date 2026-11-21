@@ -66,6 +66,8 @@ def prepare():
         sh("git", "-C", WS, "fetch", "--no-tags", "--depth=1", "origin", base)
     sh("git", "-C", WS, "worktree", "add", "--detach", "-f", BASE, base, capture_output=True)
     if GITLAB:
+        # root keeps using git in a checkout it no longer owns
+        sh("git", "config", "--global", "--add", "safe.directory", "*")
         u = gitlab_user()
         for d in (WS, BASE):
             sh("chown", "-R", f"{u.pw_uid}:{u.pw_gid}", d)
