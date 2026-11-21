@@ -60,6 +60,8 @@ def prepare():
     if GITLAB and os.path.isdir(CACHE):
         # GitLab restores its cache inside the project; the record itself lives outside the tree under test
         sh("cp", "-a", CACHE + "/.", STATE)
+        # and out of the checkout: a test that lists the project root must see the same entries as on main
+        sh("rm", "-rf", CACHE)
     # the base: the PR's base, or the commit this push came after; a first run checks against itself
     base = (os.environ.get("BASE_PR") or os.environ.get("BASE_PUSH")
             or os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or os.environ.get("CI_COMMIT_BEFORE_SHA") or "")
