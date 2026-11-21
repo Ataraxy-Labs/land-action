@@ -90,7 +90,9 @@ def check():
     wrap = ["--wrap", f"setpriv --reuid={uid} --regid={gid} --init-groups bash -c"]
     cmd = [*pre, binp, "check", "--base", BASE, "--cand", WS,
            "--state", STATE, "--units-file", UNITS, "--sensor", "bpf", "--json", *wrap]
-    p = subprocess.run(cmd, text=True, capture_output=True)
+    # GitLab: the recorder runs as root and makes each command's fresh HOME and TMPDIR; with umask 0 the land user
+    # can write them, so a test's temp files stay in its own private folders instead of falling back to /tmp
+    p = subprocess.run(cmd, text=True, capture_output=True, preexec_fn=(lambda: os.umask(0)) if GITLAB else None)
     sys.stderr.write(p.stderr[-20000:])
     if not GITLAB:
         sh("sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", STATE, check=False)
