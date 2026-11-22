@@ -21,6 +21,8 @@ jobs:
             api: pytest -q tests/api
 ```
 
+See it on a real repository in [land-action-example](https://github.com/Ataraxy-Labs/land-action-example): [one pull request](https://github.com/Ataraxy-Labs/land-action-example/pull/3) edits the receipt code, so only the receipt tests run and the other two are carried, and [another](https://github.com/Ataraxy-Labs/land-action-example/pull/4) breaks a tax rate, so the pricing tests run and fail.
+
 ## How it works
 
 1. On a green run on your main branch, land records every file each command reads, in the kernel, and keeps that
