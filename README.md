@@ -70,7 +70,7 @@ recorder does not see: use `actions/setup-python` or install system-wide.
 
 ## Learn more
 
-[Speeding up CI, a practical guide](https://ataraxy-labs.github.io/land-action/learn.html) covers twelve ways to make GitHub Actions faster, with a snippet for each and which ones this action already does.
+[Speeding up CI, a practical guide](https://ataraxy-labs.github.io/land-action/) covers twelve ways to make GitHub Actions faster, with a snippet for each and which ones this action already does.
 
 ## Want more?
 

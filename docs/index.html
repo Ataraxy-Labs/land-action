@@ -3,242 +3,310 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>land-action, run only the tests a change can reach</title>
-  <meta name="description" content="A GitHub Action that records every file each test command reads and skips the commands a change can't reach. One file, GitHub's own runners, no account.">
+  <title>Speeding up CI, a practical guide</title>
+  <meta name="description" content="Twelve ways to make GitHub Actions faster, with the snippet for each and how to tell which one your CI needs first.">
   <link rel="stylesheet" href="style.css">
   <style>
-    .side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
-    .side-by-side .terminal { margin: 0; }
-    .score-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 13px; }
-    .score-label { width: 110px; text-align: right; color: var(--dim); }
-    .score-bar-bg { flex: 1; height: 28px; background: var(--surface); border-radius: 6px; overflow: hidden; }
-    .score-bar-fill { height: 100%; border-radius: 6px; width: 0; transition: width 1s ease 0.3s; }
-    .score-value { width: 150px; font-weight: 600; }
-    .pushes { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 24px; }
-    .pushes th, .pushes td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-    .pushes th { color: var(--dim2); font-weight: 500; }
-    .speed-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-    .speed-card { background: var(--surface); border: 1px solid var(--border); border-top: 2px solid var(--green); border-radius: 8px; padding: 16px; }
-    .speed-card h3 { font-size: 14px; color: var(--accent); margin-bottom: 8px; }
-    .speed-card p { font-size: 12.5px; color: var(--dim); line-height: 1.7; }
-    .speed-card .you { margin-top: 10px; color: var(--fg); }
-    .inputs { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .inputs th, .inputs td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-    .inputs th { color: var(--dim2); font-weight: 500; }
-    .inputs code, .plain code { color: var(--cyan); }
-    .plain { font-size: 13.5px; color: var(--dim); line-height: 1.8; max-width: 680px; }
-    .plain li { margin: 6px 0 6px 18px; }
-    .fade-in { opacity: 0; transform: translateY(20px); transition: opacity 0.6s ease, transform 0.6s ease; }
-    .fade-in.visible { opacity: 1; transform: translateY(0); }
-    .install-box .copied.show { opacity: 1 !important; }
-    @media (max-width: 640px) {
-      .side-by-side { grid-template-columns: 1fr; }
-      .score-label { width: 80px; }
-      .score-value { width: 110px; }
-    }
+    .toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 24px; font-size: 13px; margin-top: 16px; }
+    .toc a { color: var(--dim); text-decoration: none; }
+    .toc a:hover { color: var(--fg); }
+    .toc .n { color: var(--dim2); display: inline-block; width: 26px; }
+    .tip { padding-top: 8px; }
+    .tip h2 { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .tip h2 .n { color: var(--dim2); font-weight: 400; }
+    .tag { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.3px; }
+    .tag.land { background: #4ade8022; color: var(--green); }
+    .tag.partial { background: #facc1522; color: var(--yellow); }
+    .plain { font-size: 13.5px; color: var(--dim); line-height: 1.8; max-width: 700px; }
+    .plain p + p { margin-top: 12px; }
+    .plain code, .why code { color: var(--cyan); }
+    .why { font-size: 12.5px; color: var(--dim2); margin-top: 10px; line-height: 1.7; max-width: 700px; }
+    .terminal { margin-top: 16px; }
+    .order { counter-reset: s; list-style: none; font-size: 13.5px; color: var(--dim); line-height: 1.8; }
+    .order li { counter-increment: s; margin: 8px 0; padding-left: 30px; position: relative; }
+    .order li::before { content: counter(s); position: absolute; left: 0; color: var(--green); font-weight: 700; }
+    .tool-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 8px; }
+    .tool-card { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-decoration: none; transition: border-color 0.2s; }
+    .tool-card:hover { border-color: #444; }
+    .tool-card h3 { font-size: 14px; color: var(--accent); margin-bottom: 4px; }
+    .tool-card .kind { font-size: 11px; font-weight: 600; letter-spacing: 0.3px; margin-bottom: 10px; }
+    .tool-card p { font-size: 12.5px; color: var(--dim); line-height: 1.7; }
+    .tool-card.hosted { border-color: var(--green); grid-column: 1 / -1; }
+    @media (max-width: 640px) { .tool-cards { grid-template-columns: 1fr; } }
+    .tool-card.hosted ul { font-size: 12.5px; color: var(--fg); line-height: 1.8; margin: 10px 0 0 18px; }
   </style>
 </head>
 <body>
   <div class="container">
     <nav>
-      <a class="logo" href="index.html">land-action</a>
+      <a class="logo" href="index.html">faster CI</a>
       <div class="links">
-        <a href="#speedups">Speedups</a>
-        <a href="#setup">Setup</a>
-        <a href="learn.html">Learn</a>
-        <a href="https://github.com/Ataraxy-Labs/land-action-example">Example</a>
+        <a href="index.html">Guide</a>
+        <a href="action.html">land-action</a>
+        <a href="index.html#more">More tools</a>
         <a href="https://github.com/Ataraxy-Labs/land-action">GitHub</a>
         <a href="https://useland.dev">useland.dev</a>
       </div>
     </nav>
 
-    <div style="padding: 60px 0 20px; text-align: center;">
-      <h1 style="font-size: 42px; font-weight: 700; color: var(--accent); letter-spacing: -2px; margin-bottom: 12px;">Run only the tests a change can reach.</h1>
-      <p style="font-size: 14px; color: var(--dim); margin-bottom: 32px; line-height: 1.7; max-width: 540px; margin-left: auto; margin-right: auto;">
-        A GitHub Action that records every file each test command reads, in the kernel, and skips the commands whose files didn't change. One file, GitHub's own runners, no account and no token.
-      </p>
-    </div>
-
-    <div class="side-by-side fade-in">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div>
-          <div class="terminal-title">plain CI</div>
-        </div>
-        <div class="terminal-body">
-<pre><span class="d"># a PR that edits shop/receipt.py</span>
-
-<span class="cmd">$ pytest tests</span>
-tests/test_catalog.py  <span class="g">passed</span>
-tests/test_pricing.py  <span class="g">passed</span>
-tests/test_receipt.py  <span class="g">passed</span>
-
-<span class="d"># every test file ran again</span></pre>
-        </div>
-      </div>
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div>
-          <div class="terminal-title">land-action</div>
-        </div>
-        <div class="terminal-body">
-<pre><span class="d"># the same PR</span>
-
-<span class="cmd">land: Green. ran 1, carried 2</span>
-tests-test_catalog  <span class="d">carried, passed</span>
-tests-test_pricing  <span class="d">carried, passed</span>
-tests-test_receipt  <span class="g">ran, passed</span>
-  <span class="d">read changed: file:shop/receipt.py</span>
-<span class="d"># only the file that reads it ran</span></pre>
-        </div>
+    <div style="padding: 60px 0 10px;">
+      <h1 style="font-size: 36px; font-weight: 700; color: var(--accent); letter-spacing: -1.5px; margin-bottom: 12px;">Speeding up CI, a practical guide</h1>
+      <p class="plain">Most slow CI comes from a handful of causes, and each one has a known fix. This page lists twelve of them with the snippet to copy, roughly in the order they pay off. The ones land-action already does for you are marked.</p>
+      <div class="toc">
+        <a href="#measure"><span class="n">01</span>Measure where the time goes</a>
+        <a href="#cancel"><span class="n">02</span>Cancel runs nobody will read</a>
+        <a href="#install"><span class="n">03</span>Stop reinstalling dependencies</a>
+        <a href="#fewer"><span class="n">04</span>Run only the tests a change reaches</a>
+        <a href="#split"><span class="n">05</span>Split the suite finely</a>
+        <a href="#parallel"><span class="n">06</span>Use every core, then shard</a>
+        <a href="#pr-memory"><span class="n">07</span>Don't reprove what a PR already proved</a>
+        <a href="#flaky"><span class="n">08</span>Rerun a failure before trusting it</a>
+        <a href="#pin"><span class="n">09</span>Pin the toolchain</a>
+        <a href="#merged"><span class="n">10</span>Test what actually merges</a>
+        <a href="#failures"><span class="n">11</span>Make failures quick to read</a>
+        <a href="#machines"><span class="n">12</span>Faster machines, last</a>
       </div>
     </div>
 
-    <div style="text-align: center; margin: 32px 0 40px;">
-      <div class="install-box" onclick="copyCmd(this, 'uses: Ataraxy-Labs/land-action@v1')" style="display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 20px; font-size: 14px; color: var(--fg); cursor: pointer; position: relative;">
-        <span class="copied" style="position: absolute; top: -28px; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--green); opacity: 0; transition: opacity 0.2s;">copied</span>
-        <span style="color: var(--dim);">-</span> uses: Ataraxy-Labs/land-action@v1
+    <section class="tip" id="measure">
+      <h2><span class="n">01</span> Measure where the time goes</h2>
+      <div class="plain">
+        <p>Before changing anything, split a run's time into two numbers. Queue time is how long a job waited for a runner, and run time is how long it actually ran. A fast suite that waits five minutes for a machine needs a different fix from a slow suite that starts instantly.</p>
       </div>
-    </div>
-
-    <section class="fade-in">
-      <h2>One pull request, three pushes</h2>
-      <p class="section-desc">A real run on the <a href="https://github.com/Ataraxy-Labs/land-action-example" style="color:var(--cyan)">example repository</a>, three test files, split by file. Plain CI runs all three on every push.</p>
-      <div style="max-width: 600px;">
-        <div class="score-row">
-          <span class="score-label">plain CI</span>
-          <div class="score-bar-bg"><div class="score-bar-fill" style="background: var(--dim2);" data-width="100"></div></div>
-          <span class="score-value" style="color:var(--dim)">9 test runs</span>
-        </div>
-        <div class="score-row">
-          <span class="score-label" style="color:var(--green)">land-action</span>
-          <div class="score-bar-bg"><div class="score-bar-fill" style="background: var(--green);" data-width="22.2"></div></div>
-          <span class="score-value" style="color:var(--green)">2 test runs</span>
-        </div>
-      </div>
-      <table class="pushes">
-        <tr><th>push</th><th>what changed</th><th>ran</th><th>result</th></tr>
-        <tr><td>1</td><td>shop/receipt.py gets a currency symbol</td><td>receipt</td><td><span class="g">green</span></td></tr>
-        <tr><td>2</td><td>the README only</td><td><span class="d">nothing, the PR remembered push 1</span></td><td><span class="g">green</span></td></tr>
-        <tr><td>3</td><td>a bug in shop/receipt.py</td><td>receipt</td><td><span class="r">red, caught</span></td></tr>
-      </table>
-    </section>
-
-    <section class="fade-in" id="speedups">
-      <h2>Five speedups, borrowed from land</h2>
-      <p class="section-desc">Each comes from <a href="https://useland.dev" style="color:var(--cyan)">land</a>, the hosted version, and works on GitHub's free runners.</p>
-      <div class="speed-cards">
-        <div class="speed-card">
-          <h3>Skip by recorded reads</h3>
-          <p>A command is carried only when every file, folder listing and installed package it read is byte for byte the same.</p>
-          <p class="you">No path filters to write or keep up to date.</p>
-        </div>
-        <div class="speed-card">
-          <h3>Each PR remembers</h3>
-          <p>A pull request keeps its own record beside main's, so the next push carries what the last push proved.</p>
-          <p class="you">An agent pushing fix after fix reruns only what each fix touched.</p>
-        </div>
-        <div class="speed-card">
-          <h3>One unit per test file</h3>
-          <p><code style="color:var(--cyan)">split: files</code> turns a pytest, vitest or jest line into one command per test file, and <code style="color:var(--cyan)">go test ./...</code> into one per package.</p>
-          <p class="you">Edit one module and only the files that read it run.</p>
-        </div>
-        <div class="speed-card">
-          <h3>Rerun before blaming</h3>
-          <p>A command that fails beside others is rerun alone before it is judged. One that flips is marked nondeterministic and never carried.</p>
-          <p class="you">A flaky test shows up as flaky, not as your change.</p>
-        </div>
-        <div class="speed-card">
-          <h3>Every core</h3>
-          <p>Commands run in parallel, each with its own fresh home and temp folder, sized to the runner.</p>
-          <p class="you">The whole runner is used without sharding anything.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="fade-in" id="setup">
-      <h2>Setup</h2>
-      <p class="section-desc">Add one step after your dependencies are installed.</p>
       <div class="terminal">
-        <div class="terminal-bar">
-          <div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div>
-          <div class="terminal-title">.github/workflows/land.yml</div>
-        </div>
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">queue and run time for each job of a run</div></div>
         <div class="terminal-body">
-<pre><span class="b">name</span>: land
-<span class="b">on</span>: [pull_request, push]
-<span class="b">jobs</span>:
-  <span class="b">test</span>:
-    <span class="b">runs-on</span>: ubuntu-latest
-    <span class="b">steps</span>:
-      - <span class="b">uses</span>: actions/checkout@v4
-      - <span class="b">uses</span>: actions/setup-python@v5
-        <span class="b">with</span>: { python-version: <span class="g">"3.12"</span> }
-      - <span class="b">run</span>: pip install -r requirements.txt
-      - <span class="b">uses</span>: <span class="cmd">Ataraxy-Labs/land-action@v1</span>
-        <span class="b">with</span>:
-          <span class="b">split</span>: files
-          <span class="b">run</span>: |
-            tests: pytest -q tests</pre>
+<pre><span class="cmd">$ gh api repos/OWNER/REPO/actions/runs/RUN_ID/jobs --jq '.jobs[] |
+    "\(.name)  queued \((.started_at|fromdate) - (.created_at|fromdate))s  ran \((.completed_at|fromdate) - (.started_at|fromdate))s"'</span></pre>
         </div>
       </div>
-      <table class="inputs" style="margin-top: 24px;">
-        <tr><th>input</th><th>default</th><th></th></tr>
-        <tr><td><code>run</code></td><td>required</td><td>test commands, one per line, optionally <code>name: command</code></td></tr>
-        <tr><td><code>split</code></td><td><code>none</code></td><td><code>files</code> runs each test file (pytest, vitest, jest) or Go package as its own command</td></tr>
-        <tr><td><code>main</code></td><td>the default branch</td><td>the branch whose green runs record</td></tr>
-        <tr><td><code>working-directory</code></td><td><code>.</code></td><td>where the commands run</td></tr>
-      </table>
-      <p class="plain" style="margin-top: 24px;">land-action is one part of a fast pipeline. <a href="learn.html" style="color:var(--cyan)">Speeding up CI, a practical guide &rarr;</a> covers the rest, from cancelling stale runs and caching installs to sharding, pinning and the merge queue, with a snippet for each.</p>
+      <p class="why">Then open the slowest job and sort its steps by duration. The usual top three are installing dependencies, the test step, and building.</p>
     </section>
 
-    <section class="fade-in">
-      <h2>When a command runs anyway</h2>
-      <ul class="plain">
-        <li>There is no green run on main yet, so the first run records.</li>
-        <li>Any file it read changed, appeared or disappeared.</li>
-        <li>It failed last time, or failed differently with the same files.</li>
-        <li>The recorder could not see everything it did.</li>
-      </ul>
-      <p class="plain" style="margin-top: 16px;">Pull requests from forks work because nothing needs a secret. A pull request reads main's record and keeps its own, but never writes main's, so only your main branch decides what counts as green.</p>
+    <section class="tip" id="cancel">
+      <h2><span class="n">02</span> Cancel runs nobody will read</h2>
+      <div class="plain">
+        <p>When someone (or an agent) pushes three times in a minute, the first two runs are already out of date. A concurrency group cancels them, which frees runners and cuts queue time for everyone else. It's two lines and costs nothing.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">.github/workflows/ci.yml</div></div>
+        <div class="terminal-body">
+<pre><span class="b">concurrency</span>:
+  <span class="b">group</span>: ${{ github.workflow }}-${{ github.ref }}
+  <span class="b">cancel-in-progress</span>: ${{ github.ref != 'refs/heads/main' }}</pre>
+        </div>
+      </div>
+      <p class="why">Keeping main's runs uncancelled means every commit on main still gets a result, which land-action needs to record from.</p>
     </section>
 
-    <section class="fade-in">
-      <h2>Limits</h2>
-      <ul class="plain">
-        <li>Linux runners only (<code>ubuntu-*</code>). GitLab.com's hosted runners work too, see the README.</li>
-        <li>Packages installed with <code>pip install --user</code> sit in your home folder, which the recorder doesn't watch. Use <code>actions/setup-python</code> or a system-wide install.</li>
-        <li>How much is skipped depends on how finely your tests are split. <code>split: files</code> is the easy way to get there.</li>
-      </ul>
+    <section class="tip" id="install">
+      <h2><span class="n">03</span> Stop reinstalling dependencies</h2>
+      <div class="plain">
+        <p>Downloading the same packages on every run is often the biggest single step. The setup actions can cache them keyed on your lockfile, so a run only downloads when the lockfile changes.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">.github/workflows/ci.yml</div></div>
+        <div class="terminal-body">
+<pre>- <span class="b">uses</span>: actions/setup-node@v4
+  <span class="b">with</span>: { node-version: <span class="g">22</span>, cache: npm }
+- <span class="b">run</span>: npm ci
+
+- <span class="b">uses</span>: actions/setup-python@v5
+  <span class="b">with</span>: { python-version: <span class="g">"3.12"</span>, cache: pip }
+- <span class="b">run</span>: pip install -r requirements.txt</pre>
+        </div>
+      </div>
+      <p class="why">For Docker builds the equivalent is layer caching, <code>cache-from: type=gha</code> and <code>cache-to: type=gha,mode=max</code> on docker/build-push-action.</p>
     </section>
 
-    <section class="fade-in" style="text-align: center;">
-      <h2>Want more?</h2>
-      <p class="section-desc" style="max-width: 560px; margin-left: auto; margin-right: auto;">The same recorder runs <a href="https://useland.dev" style="color:var(--cyan)">land</a>, which adds faster machines, environments built once and kept warm, and merging several branches with one test run. 500 minutes a month free.</p>
+    <section class="tip" id="fewer">
+      <h2><span class="n">04</span> Run only the tests a change reaches <span class="tag land">LAND-ACTION DOES THIS</span></h2>
+      <div class="plain">
+        <p>Most pull requests touch a small part of the code, yet CI reruns every test. There are three common ways to narrow it, and they trade effort for safety differently.</p>
+        <p><code>paths</code> filters skip a whole workflow when nothing under a folder changed. They're easy, but someone has to keep them up to date, and a shared file that isn't listed lets a breaking change through.</p>
+        <p>Monorepo tools like <code>nx affected</code> and <code>turbo --filter</code> use the project graph you declare. They're precise between projects and blind to anything the graph doesn't say, such as a test reading a fixture file.</p>
+        <p>Recording reads, which land-action does, watches every file each test command actually opens, so nothing has to be declared and a test reruns whenever anything it read changed.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">the three, side by side</div></div>
+        <div class="terminal-body">
+<pre><span class="d"># paths filter</span>
+<span class="b">on</span>: { pull_request: { paths: [<span class="g">"api/**"</span>] } }
+
+<span class="d"># project graph</span>
+<span class="cmd">$ npx nx affected -t test --base=origin/main</span>
+<span class="cmd">$ npx turbo run test --filter="...[origin/main]"</span>
+
+<span class="d"># recorded reads</span>
+- <span class="b">uses</span>: Ataraxy-Labs/land-action@v1
+  <span class="b">with</span>: { run: <span class="g">"tests: pytest -q tests"</span> }</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="tip" id="split">
+      <h2><span class="n">05</span> Split the suite finely <span class="tag land">LAND-ACTION DOES THIS</span></h2>
+      <div class="plain">
+        <p>Any selection method can only skip what it can tell apart. If the whole suite is one command, one changed file means the whole suite runs. Splitting by test file lets an edit to one module rerun just the files that use it.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">one line, one unit per test file</div></div>
+        <div class="terminal-body">
+<pre>- <span class="b">uses</span>: Ataraxy-Labs/land-action@v1
+  <span class="b">with</span>:
+    <span class="b">split</span>: files
+    <span class="b">run</span>: <span class="g">"tests: pytest -q tests"</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="tip" id="parallel">
+      <h2><span class="n">06</span> Use every core, then shard <span class="tag partial">LAND-ACTION DOES THE FIRST HALF</span></h2>
+      <div class="plain">
+        <p>GitHub's standard Linux runners have 4 cores, and a test runner left on defaults often uses one. Turn on parallel workers first, since it's free. Only after that is it worth splitting across machines with a matrix, because each extra machine pays for checkout and install again.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">workers, then shards</div></div>
+        <div class="terminal-body">
+<pre><span class="cmd">$ pytest -n auto</span>                <span class="d"># pytest-xdist</span>
+<span class="cmd">$ npx vitest run --shard=1/3</span>
+<span class="cmd">$ npx jest --shard=1/3</span>
+
+<span class="b">strategy</span>:
+  <span class="b">matrix</span>: { shard: [<span class="g">1</span>, <span class="g">2</span>, <span class="g">3</span>] }</pre>
+        </div>
+      </div>
+      <p class="why">Balance shards by how long tests take, not by how many files each shard gets, or one shard runs long after the others finish.</p>
+    </section>
+
+    <section class="tip" id="pr-memory">
+      <h2><span class="n">07</span> Don't reprove what a PR already proved <span class="tag land">LAND-ACTION DOES THIS</span></h2>
+      <div class="plain">
+        <p>A pull request often gets pushed many times, and each push usually touches one or two files. If CI only remembers main, every push reruns everything the previous push already passed. land-action keeps a record for each pull request, so push five reruns only what push five changed.</p>
+      </div>
+    </section>
+
+    <section class="tip" id="flaky">
+      <h2><span class="n">08</span> Rerun a failure before trusting it <span class="tag land">LAND-ACTION DOES THIS</span></h2>
+      <div class="plain">
+        <p>Flaky tests cost more than their runtime, because each one sends someone digging into a change that didn't break anything. Rerunning a failed test on its own tells the two cases apart. A test that passes alone is either flaky or depends on another test's leftovers, and both are worth quarantining and fixing.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">by hand</div></div>
+        <div class="terminal-body">
+<pre><span class="cmd">$ pytest --lf</span>                    <span class="d"># rerun only last run's failures</span>
+<span class="cmd">$ pytest -p no:randomly tests/test_x.py::test_y</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="tip" id="pin">
+      <h2><span class="n">09</span> Pin the toolchain</h2>
+      <div class="plain">
+        <p>An unpinned <code>apt-get install</code>, a <code>latest</code> image tag or a floating Node version can turn main red on a day nobody changed anything. Pin versions in the workflow and commit the lockfile, so a red run always means a real change.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">.github/workflows/ci.yml</div></div>
+        <div class="terminal-body">
+<pre><span class="b">runs-on</span>: ubuntu-24.04             <span class="d"># not ubuntu-latest</span>
+- <span class="b">uses</span>: actions/setup-node@v4
+  <span class="b">with</span>: { node-version-file: .nvmrc }</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="tip" id="merged">
+      <h2><span class="n">10</span> Test what actually merges</h2>
+      <div class="plain">
+        <p>Two pull requests can each pass on their own and break main together. GitHub's merge queue tests each pull request on top of everything ahead of it before merging. Add the <code>merge_group</code> event so your checks run there too.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">.github/workflows/ci.yml</div></div>
+        <div class="terminal-body">
+<pre><span class="b">on</span>:
+  <span class="b">pull_request</span>:
+  <span class="b">merge_group</span>:
+  <span class="b">push</span>: { branches: [main] }</pre>
+        </div>
+      </div>
+      <p class="why">This is where <a href="https://useland.dev" style="color:var(--cyan)">land</a> goes further, merging several finished branches together and testing them in one run, then naming the branch that broke the tests.</p>
+    </section>
+
+    <section class="tip" id="failures">
+      <h2><span class="n">11</span> Make failures quick to read</h2>
+      <div class="plain">
+        <p>The time to fix a red build includes the time spent finding the failure in the log. Write test results as JUnit XML and show them as annotations, so the failing test and its assertion appear on the pull request itself. Turn off <code>fail-fast</code> in a matrix when you want every failure from one run.</p>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar"><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-title">results you can read</div></div>
+        <div class="terminal-body">
+<pre><span class="cmd">$ pytest --junitxml=results.xml</span>
+<span class="cmd">$ npx vitest run --reporter=junit --outputFile=results.xml</span>
+
+<span class="b">strategy</span>: { fail-fast: false }</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="tip" id="machines">
+      <h2><span class="n">12</span> Faster machines, last</h2>
+      <div class="plain">
+        <p>Bigger runners from GitHub, or providers like Blacksmith, Depot and Namespace, make every step faster without changing your workflow. They're worth it once the steps above are done, because they speed up the work you kept, and the steps above remove the work you didn't need.</p>
+      </div>
+    </section>
+
+    <section class="fade-in visible">
+      <h2>Where to start</h2>
+      <ol class="order">
+        <li>Measure queue time and run time for one slow run (01).</li>
+        <li>Add the concurrency group and dependency caching (02, 03). Both take minutes.</li>
+        <li>Add land-action with <code style="color:var(--cyan)">split: files</code> to cover 04, 05, 07, 08 and the parallel half of 06 in one step. <a href="action.html#setup" style="color:var(--cyan)">Setup &rarr;</a></li>
+        <li>Pin versions and add the merge queue when red builds start costing more than slow ones (09, 10).</li>
+      </ol>
+    </section>
+
+    <section id="more">
+      <h2>Going further</h2>
+      <p class="plain">Everything above works on GitHub's free runners. When CI is still the bottleneck, or several people and agents are merging into main at once, these come next.</p>
+      <div class="tool-cards">
+        <a class="tool-card hosted" href="https://useland.dev">
+          <div class="kind" style="color:var(--green)">HOSTED SERVICE</div>
+          <h3>land, at useland.dev</h3>
+          <p>The same recorder as land-action, running on land's own machines and taking over merging too.</p>
+          <ul>
+            <li>Merges several finished branches with main and tests them together in one run</li>
+            <li>Names the branch that broke the tests, with the failing test and a one-command repro</li>
+            <li>Environments built once and kept warm, so installs don't rerun</li>
+            <li>Move a workflow over by changing <code style="color:var(--cyan)">runs-on: ubuntu-latest</code> to <code style="color:var(--cyan)">runs-on: land</code></li>
+            <li>500 free minutes a month with no card, then from $0.0008 a minute, billed per second</li>
+          </ul>
+        </a>
+        <a class="tool-card" href="action.html">
+          <div class="kind" style="color:var(--cyan)">FREE · GITHUB ACTION</div>
+          <h3>land-action</h3>
+          <p>Skips test commands whose recorded files didn't change, on GitHub's own runners with no account. Covers 04, 05, 07 and 08 above.</p>
+        </a>
+        <a class="tool-card" href="https://github.com/Ataraxy-Labs/sem">
+          <div class="kind" style="color:var(--cyan)">FREE · GITHUB</div>
+          <h3>sem</h3>
+          <p>Entity-level diffs, blame and impact analysis on top of git, so you can see which functions a change touches and what depends on them.</p>
+        </a>
+        <a class="tool-card" href="https://github.com/Ataraxy-Labs/weave">
+          <div class="kind" style="color:var(--cyan)">FREE · GITHUB</div>
+          <h3>weave</h3>
+          <p>A git merge driver that merges by function and class, so two branches editing different functions in one file don't conflict.</p>
+        </a>
+        <a class="tool-card" href="https://github.com/Ataraxy-Labs/inspect">
+          <div class="kind" style="color:var(--cyan)">FREE · GITHUB</div>
+          <h3>inspect</h3>
+          <p>Code review that ranks a pull request's changes by structural risk, using the cross-file dependency graph.</p>
+        </a>
+      </div>
     </section>
 
     <footer>
       <p>Built by <a href="https://ataraxy-labs.com">Ataraxy Labs</a></p>
     </footer>
   </div>
-
-  <script>
-    function copyCmd(el, cmd) {
-      navigator.clipboard.writeText(cmd);
-      const c = el.querySelector('.copied');
-      if (c) { c.classList.add('show'); setTimeout(() => c.classList.remove('show'), 1500); }
-    }
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(e => {
-        if (e.isIntersecting) {
-          e.target.classList.add('visible');
-          e.target.querySelectorAll('.score-bar-fill').forEach(bar => {
-            setTimeout(() => { bar.style.width = bar.dataset.width + '%'; }, 200);
-          });
-        }
-      });
-    }, { threshold: 0.1 });
-    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
-  </script>
 </body>
 </html>
