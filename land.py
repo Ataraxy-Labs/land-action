@@ -53,6 +53,9 @@ def prepare():
                "CARGO_HOME", "RUSTUP_HOME", "JAVA_HOME", "NODE_PATH", "CI") if os.environ.get(k)}
         if GITLAB:
             env["HOME"] = "/home/land"
+        # Python caches compiled files beside its sources, including in a toolchain the job installed (setup-python's
+        # folder is writable): one command would read what the one before it wrote, and nothing could be carried
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         units[name] = {"command": cmd, "env": env}
     if not units:
         sys.exit("land: `run` names no command")
@@ -71,7 +74,9 @@ def prepare():
         base = sh("git", "-C", WS, "rev-parse", "HEAD", capture_output=True).stdout.strip()
     if sh("git", "-C", WS, "cat-file", "-e", base + "^{commit}", check=False, capture_output=True).returncode:
         sh("git", "-C", WS, "fetch", "--no-tags", "--depth=1", "origin", base)
-    sh("git", "-C", WS, "worktree", "add", "--detach", "-f", BASE, base, capture_output=True)
+    # a clone, not a worktree: a worktree's .git is a file, the checkout's a folder, so the root would never list alike
+    sh("git", "clone", "-q", "--shared", "--no-checkout", WS, BASE)
+    sh("git", "-C", BASE, "checkout", "-q", "--detach", base)
     if GITLAB:
         u = gitlab_user()
         for d in (WS, BASE):
