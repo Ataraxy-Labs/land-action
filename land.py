@@ -35,6 +35,51 @@ def gitlab_user():
     return u
 
 
+TESTS = {
+    # the runner, how to spot it in a command, and which files are its tests
+    "pytest": (re.compile(r"(^|[\s/])(py\.test|pytest)(\s|$)"), re.compile(r"(^|/)(test_[^/]*|[^/]*_test)\.py$")),
+    "vitest": (re.compile(r"(^|[\s/])(vitest|jest)(\s|$)"), re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")),
+}
+
+
+def tracked(paths):
+    """The repository's files under `paths` (the whole tree when none), as git sees them."""
+    r = sh("git", "-C", WS, "ls-files", "--", *(paths or ["."]), capture_output=True, check=False)
+    return [l for l in r.stdout.splitlines() if l]
+
+
+def slug(path):
+    """A file's unit name: its path without the extension, in the letters land's recorder accepts."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", re.sub(r"\.[^./]+$", "", path)).strip("-") or "root"
+
+
+def split_files(name, cmd):
+    """One command per test file (land's own split, by the runner's convention). A file that only names its own path is
+    carried or rerun on its own, so a change reruns the files that can see it. Returns None when the command is not one
+    this knows how to split: it then runs whole, as written."""
+    words = cmd.split()
+    for kind, (spot, test) in TESTS.items():
+        if not spot.search(cmd):
+            continue
+        # the paths the command already names (directories or files); every other word is a flag or the runner itself
+        named = [w for w in words if not w.startswith("-") and os.path.exists(os.path.join(WS, w)) and w not in ("python", "python3")]
+        if any(os.path.isfile(os.path.join(WS, w)) for w in named):
+            return None  # it already names its files: it runs them, whole
+        files = sorted(f for f in tracked(named) if test.search(f) and "node_modules/" not in f)
+        if not files:
+            return None
+        base = " ".join(w for w in words if w not in named)
+        # pytest says 5 when a file holds no tests: a file with nothing to run passes
+        tail = "; rc=$?; [ $rc -eq 5 ] && exit 0; exit $rc" if kind == "pytest" else ""
+        return {slug(f): f"{base} {f}{tail}" for f in files}
+    if re.search(r"(^|\s)go\s+test(\s|$)", cmd) and "./..." in words:
+        pkgs = sorted({os.path.dirname(f) or "." for f in tracked([]) if f.endswith("_test.go")})
+        if not pkgs:
+            return None
+        return {slug(p): cmd.replace("./...", "./" + p if p != "." else ".") for p in pkgs}
+    return None
+
+
 def prepare():
     if GITLAB:
         # root keeps using git in the checkout after handing it to the land user
@@ -47,7 +92,7 @@ def prepare():
         m = re.match(r"^([A-Za-z0-9_.-]+):\s+(.+)$", line)
         name, cmd = (m.group(1), m.group(2)) if m else (f"cmd{len(units) + 1}", line)
         wd = os.environ.get("WD", ".")
-        cmd = cmd if wd in ("", ".") else f"cd {wd} && {cmd}"
+        parts = (split_files(name, cmd) if os.environ.get("SPLIT", "none") == "files" and wd in ("", ".") else None) or {name: cmd}
         # the job's own toolchain: the commands see what the workflow's earlier steps installed
         env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "PYTHONPATH", "VIRTUAL_ENV", "pythonLocation", "GOPATH", "GOROOT",
                "CARGO_HOME", "RUSTUP_HOME", "JAVA_HOME", "NODE_PATH", "CI") if os.environ.get(k)}
@@ -56,7 +101,9 @@ def prepare():
         # Python caches compiled files beside its sources, including in a toolchain the job installed (setup-python's
         # folder is writable): one command would read what the one before it wrote, and nothing could be carried
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        units[name] = {"command": cmd, "env": env}
+        for n, c in parts.items():
+            n = n if n not in units else f"{name}-{n}"
+            units[n] = {"command": c if wd in ("", ".") else f"cd {wd} && {c}", "env": env}
     if not units:
         sys.exit("land: `run` names no command")
     json.dump(units, open(UNITS, "w"))
@@ -126,7 +173,10 @@ def check():
         on_main = os.environ.get("CI_PIPELINE_SOURCE") == "push" and os.environ.get("CI_COMMIT_BRANCH") == os.environ.get("CI_DEFAULT_BRANCH")
     else:
         on_main = os.environ.get("GITHUB_EVENT_NAME") == "push" and os.environ.get("GITHUB_REF_NAME", "") == os.environ.get("LAND_MAIN")
-    out("save", "true" if (on_main and rc == 0) else "false")
+    # main's record moves only on green. A pull request keeps its own record of whatever this run could check, so its
+    # next push carries what this one proved; it lives in the pull request's cache scope, which main never reads
+    on_pr = not GITLAB and os.environ.get("GITHUB_EVENT_NAME") in ("pull_request", "pull_request_target")
+    out("save", "true" if (on_main and rc == 0) or (on_pr and rc in (0, 1)) else "false")
     if GITLAB:
         # only a green run on the default branch writes the record the next pipelines carry from; every other job
         # hands GitLab back exactly the record it restored

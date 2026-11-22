@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>land-action, run only the tests a change can reach</title>
+  <meta name="description" content="A GitHub Action that records every file each test command reads and skips the commands a change can't reach. One file, GitHub's own runners, no account.">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+    .side-by-side .terminal { margin: 0; }
+    .score-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 13px; }
+    .score-label { width: 110px; text-align: right; color: var(--dim); }
+    .score-bar-bg { flex: 1; height: 28px; background: var(--surface); border-radius: 6px; overflow: hidden; }
+    .score-bar-fill { height: 100%; border-radius: 6px; width: 0; transition: width 1s ease 0.3s; }
+    .score-value { width: 150px; font-weight: 600; }
+    .pushes { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 24px; }
+    .pushes th, .pushes td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    .pushes th { color: var(--dim2); font-weight: 500; }
+    .speed-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .speed-card { background: var(--surface); border: 1px solid var(--border); border-top: 2px solid var(--green); border-radius: 8px; padding: 16px; }
+    .speed-card h3 { font-size: 14px; color: var(--accent); margin-bottom: 8px; }
+    .speed-card p { font-size: 12.5px; color: var(--dim); line-height: 1.7; }
+    .speed-card .you { margin-top: 10px; color: var(--fg); }
+    .inputs { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .inputs th, .inputs td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .inputs th { color: var(--dim2); font-weight: 500; }
+    .inputs code, .plain code { color: var(--cyan); }
+    .plain { font-size: 13.5px; color: var(--dim); line-height: 1.8; max-width: 680px; }
+    .plain li { margin: 6px 0 6px 18px; }
+    .fade-in { opacity: 0; transform: translateY(20px); transition: opacity 0.6s ease, transform 0.6s ease; }
+    .fade-in.visible { opacity: 1; transform: translateY(0); }
+    .install-box .copied.show { opacity: 1 !important; }
+    @media (max-width: 640px) {
+      .side-by-side { grid-template-columns: 1fr; }
+      .score-label { width: 80px; }
+      .score-value { width: 110px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav>
+      <a class="logo" href="index.html">land-action</a>
+      <div class="links">
+        <a href="#speedups">Speedups</a>
+        <a href="#setup">Setup</a>
+        <a href="https://github.com/Ataraxy-Labs/land-action-example">Example</a>
+        <a href="https://github.com/Ataraxy-Labs/land-action">GitHub</a>
+        <a href="https://useland.dev">land</a>
+      </div>
+    </nav>
+
+    <div style="padding: 60px 0 20px; text-align: center;">
+      <h1 style="font-size: 42px; font-weight: 700; color: var(--accent); letter-spacing: -2px; margin-bottom: 12px;">Run only the tests a change can reach.</h1>
+      <p style="font-size: 14px; color: var(--dim); margin-bottom: 32px; line-height: 1.7; max-width: 540px; margin-left: auto; margin-right: auto;">
+        A GitHub Action that records every file each test command reads, in the kernel, and skips the commands whose files didn't change. One file, GitHub's own runners, no account and no token.
+      </p>
+    </div>
+
+    <div class="side-by-side fade-in">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div>
+          <div class="terminal-title">plain CI</div>
+        </div>
+        <div class="terminal-body">
+<pre><span class="d"># a PR that edits shop/receipt.py</span>
+
+<span class="cmd">$ pytest tests</span>
+tests/test_catalog.py  <span class="g">passed</span>
+tests/test_pricing.py  <span class="g">passed</span>
+tests/test_receipt.py  <span class="g">passed</span>
+
+<span class="d"># every test file ran again</span></pre>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div>
+          <div class="terminal-title">land-action</div>
+        </div>
+        <div class="terminal-body">
+<pre><span class="d"># the same PR</span>
+
+<span class="cmd">land: Green. ran 1, carried 2</span>
+tests-test_catalog  <span class="d">carried, passed</span>
+tests-test_pricing  <span class="d">carried, passed</span>
+tests-test_receipt  <span class="g">ran, passed</span>
+  <span class="d">read changed: file:shop/receipt.py</span>
+<span class="d"># only the file that reads it ran</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <div style="text-align: center; margin: 32px 0 40px;">
+      <div class="install-box" onclick="copyCmd(this, 'uses: Ataraxy-Labs/land-action@v1')" style="display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 20px; font-size: 14px; color: var(--fg); cursor: pointer; position: relative;">
+        <span class="copied" style="position: absolute; top: -28px; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--green); opacity: 0; transition: opacity 0.2s;">copied</span>
+        <span style="color: var(--dim);">-</span> uses: Ataraxy-Labs/land-action@v1
+      </div>
+    </div>
+
+    <section class="fade-in">
+      <h2>One pull request, three pushes</h2>
+      <p class="section-desc">A real run on the <a href="https://github.com/Ataraxy-Labs/land-action-example" style="color:var(--cyan)">example repository</a>, three test files, split by file. Plain CI runs all three on every push.</p>
+      <div style="max-width: 600px;">
+        <div class="score-row">
+          <span class="score-label">plain CI</span>
+          <div class="score-bar-bg"><div class="score-bar-fill" style="background: var(--dim2);" data-width="100"></div></div>
+          <span class="score-value" style="color:var(--dim)">9 test runs</span>
+        </div>
+        <div class="score-row">
+          <span class="score-label" style="color:var(--green)">land-action</span>
+          <div class="score-bar-bg"><div class="score-bar-fill" style="background: var(--green);" data-width="22.2"></div></div>
+          <span class="score-value" style="color:var(--green)">2 test runs</span>
+        </div>
+      </div>
+      <table class="pushes">
+        <tr><th>push</th><th>what changed</th><th>ran</th><th>result</th></tr>
+        <tr><td>1</td><td>shop/receipt.py gets a currency symbol</td><td>receipt</td><td><span class="g">green</span></td></tr>
+        <tr><td>2</td><td>the README only</td><td><span class="d">nothing, the PR remembered push 1</span></td><td><span class="g">green</span></td></tr>
+        <tr><td>3</td><td>a bug in shop/receipt.py</td><td>receipt</td><td><span class="r">red, caught</span></td></tr>
+      </table>
+    </section>
+
+    <section class="fade-in" id="speedups">
+      <h2>Five speedups, borrowed from land</h2>
+      <p class="section-desc">Each comes from <a href="https://useland.dev" style="color:var(--cyan)">land</a>, the hosted version, and works on GitHub's free runners.</p>
+      <div class="speed-cards">
+        <div class="speed-card">
+          <h3>Skip by recorded reads</h3>
+          <p>A command is carried only when every file, folder listing and installed package it read is byte for byte the same.</p>
+          <p class="you">No path filters to write or keep up to date.</p>
+        </div>
+        <div class="speed-card">
+          <h3>Each PR remembers</h3>
+          <p>A pull request keeps its own record beside main's, so the next push carries what the last push proved.</p>
+          <p class="you">An agent pushing fix after fix reruns only what each fix touched.</p>
+        </div>
+        <div class="speed-card">
+          <h3>One unit per test file</h3>
+          <p><code style="color:var(--cyan)">split: files</code> turns a pytest, vitest or jest line into one command per test file, and <code style="color:var(--cyan)">go test ./...</code> into one per package.</p>
+          <p class="you">Edit one module and only the files that read it run.</p>
+        </div>
+        <div class="speed-card">
+          <h3>Rerun before blaming</h3>
+          <p>A command that fails beside others is rerun alone before it is judged. One that flips is marked nondeterministic and never carried.</p>
+          <p class="you">A flaky test shows up as flaky, not as your change.</p>
+        </div>
+        <div class="speed-card">
+          <h3>Every core</h3>
+          <p>Commands run in parallel, each with its own fresh home and temp folder, sized to the runner.</p>
+          <p class="you">The whole runner is used without sharding anything.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="fade-in" id="setup">
+      <h2>Setup</h2>
+      <p class="section-desc">Add one step after your dependencies are installed.</p>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="terminal-dot"></div><div class="terminal-dot"></div><div class="terminal-dot"></div>
+          <div class="terminal-title">.github/workflows/land.yml</div>
+        </div>
+        <div class="terminal-body">
+<pre><span class="b">name</span>: land
+<span class="b">on</span>: [pull_request, push]
+<span class="b">jobs</span>:
+  <span class="b">test</span>:
+    <span class="b">runs-on</span>: ubuntu-latest
+    <span class="b">steps</span>:
+      - <span class="b">uses</span>: actions/checkout@v4
+      - <span class="b">uses</span>: actions/setup-python@v5
+        <span class="b">with</span>: { python-version: <span class="g">"3.12"</span> }
+      - <span class="b">run</span>: pip install -r requirements.txt
+      - <span class="b">uses</span>: <span class="cmd">Ataraxy-Labs/land-action@v1</span>
+        <span class="b">with</span>:
+          <span class="b">split</span>: files
+          <span class="b">run</span>: |
+            tests: pytest -q tests</pre>
+        </div>
+      </div>
+      <table class="inputs" style="margin-top: 24px;">
+        <tr><th>input</th><th>default</th><th></th></tr>
+        <tr><td><code>run</code></td><td>required</td><td>test commands, one per line, optionally <code>name: command</code></td></tr>
+        <tr><td><code>split</code></td><td><code>none</code></td><td><code>files</code> runs each test file (pytest, vitest, jest) or Go package as its own command</td></tr>
+        <tr><td><code>main</code></td><td>the default branch</td><td>the branch whose green runs record</td></tr>
+        <tr><td><code>working-directory</code></td><td><code>.</code></td><td>where the commands run</td></tr>
+      </table>
+    </section>
+
+    <section class="fade-in">
+      <h2>When a command runs anyway</h2>
+      <ul class="plain">
+        <li>There is no green run on main yet, so the first run records.</li>
+        <li>Any file it read changed, appeared or disappeared.</li>
+        <li>It failed last time, or failed differently with the same files.</li>
+        <li>The recorder could not see everything it did.</li>
+      </ul>
+      <p class="plain" style="margin-top: 16px;">Pull requests from forks work because nothing needs a secret. A pull request reads main's record and keeps its own, but never writes main's, so only your main branch decides what counts as green.</p>
+    </section>
+
+    <section class="fade-in">
+      <h2>Limits</h2>
+      <ul class="plain">
+        <li>Linux runners only (<code>ubuntu-*</code>). GitLab.com's hosted runners work too, see the README.</li>
+        <li>Packages installed with <code>pip install --user</code> sit in your home folder, which the recorder doesn't watch. Use <code>actions/setup-python</code> or a system-wide install.</li>
+        <li>How much is skipped depends on how finely your tests are split. <code>split: files</code> is the easy way to get there.</li>
+      </ul>
+    </section>
+
+    <section class="fade-in" style="text-align: center;">
+      <h2>Want more?</h2>
+      <p class="section-desc" style="max-width: 560px; margin-left: auto; margin-right: auto;">The same recorder runs <a href="https://useland.dev" style="color:var(--cyan)">land</a>, which adds faster machines, environments built once and kept warm, and merging several branches with one test run. 500 minutes a month free.</p>
+    </section>
+
+    <footer>
+      <p>Built by <a href="https://ataraxy-labs.com">Ataraxy Labs</a></p>
+    </footer>
+  </div>
+
+  <script>
+    function copyCmd(el, cmd) {
+      navigator.clipboard.writeText(cmd);
+      const c = el.querySelector('.copied');
+      if (c) { c.classList.add('show'); setTimeout(() => c.classList.remove('show'), 1500); }
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          e.target.classList.add('visible');
+          e.target.querySelectorAll('.score-bar-fill').forEach(bar => {
+            setTimeout(() => { bar.style.width = bar.dataset.width + '%'; }, 200);
+          });
+        }
+      });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+  </script>
+</body>
+</html>

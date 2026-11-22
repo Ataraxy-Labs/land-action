@@ -15,6 +15,11 @@ inputs:
   working-directory:
     description: Where the commands run, relative to the repository root
     default: .
+  split:
+    description: |
+      `files` runs each test file as its own command (pytest, vitest, jest, and `go test` by package), so a change
+      reruns only the files that can see it. `none` keeps each line whole.
+    default: none
 outputs:
   ran:
     description: How many commands ran
@@ -30,6 +35,7 @@ runs:
       env:
         RUN_LINES: ${{ inputs.run }}
         WD: ${{ inputs.working-directory }}
+        SPLIT: ${{ inputs.split }}
         BASE_PR: ${{ github.event.pull_request.base.sha }}
         BASE_PUSH: ${{ github.event.before }}
       run: python3 "${{ github.action_path }}/land.py" prepare
@@ -37,8 +43,11 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ${{ runner.temp }}/land-state
-        key: land-state-${{ inputs.main }}-${{ github.sha }}
-        restore-keys: land-state-${{ inputs.main }}-
+        # a pull request reads its own record first (what its earlier pushes proved), then main's
+        key: land-state-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || inputs.main }}-${{ github.sha }}
+        restore-keys: |
+          land-state-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || inputs.main }}-
+          land-state-${{ inputs.main }}-
     - name: land · check
       id: check
       shell: bash
@@ -46,9 +55,9 @@ runs:
         LAND_MAIN: ${{ inputs.main }}
         LAND_BIN: ${{ github.action_path }}/bin/inspect
       run: python3 "${{ github.action_path }}/land.py" check
-    - name: land · save the record (green runs on main only)
+    - name: land · save the record (main's green runs, and each pull request's own)
       if: steps.check.outputs.save == 'true'
       uses: actions/cache/save@v4
       with:
         path: ${{ runner.temp }}/land-state
-        key: land-state-${{ inputs.main }}-${{ github.sha }}
+        key: land-state-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || inputs.main }}-${{ github.sha }}
