@@ -75,7 +75,12 @@ def prepare():
     if sh("git", "-C", WS, "cat-file", "-e", base + "^{commit}", check=False, capture_output=True).returncode:
         sh("git", "-C", WS, "fetch", "--no-tags", "--depth=1", "origin", base)
     # a clone, not a worktree: a worktree's .git is a file, the checkout's a folder, so the root would never list alike
-    sh("git", "clone", "-q", "--shared", "--no-checkout", WS, BASE)
+    # it borrows the checkout's objects (the checkout is often shallow, which a clone refuses)
+    sh("git", "init", "-q", BASE)
+    with open(os.path.join(BASE, ".git", "objects", "info", "alternates"), "w") as f:
+        f.write(os.path.join(WS, ".git", "objects") + "\n")
+    if os.path.exists(os.path.join(WS, ".git", "shallow")):
+        sh("cp", os.path.join(WS, ".git", "shallow"), os.path.join(BASE, ".git", "shallow"))
     sh("git", "-C", BASE, "checkout", "-q", "--detach", base)
     if GITLAB:
         u = gitlab_user()
