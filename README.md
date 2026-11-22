@@ -68,6 +68,10 @@ already names its test files runs whole, as written.
 Linux runners only (`ubuntu-*`). Packages installed with `pip install --user` live in your home directory, which the
 recorder does not see: use `actions/setup-python` or install system-wide.
 
+## Learn more
+
+[Speeding up CI, a practical guide](https://ataraxy-labs.github.io/land-action/learn.html) covers twelve ways to make GitHub Actions faster, with a snippet for each and which ones this action already does.
+
 ## Want more?
 
 The same recorder powers [land](https://useland.dev): faster machines, environments built once and kept warm, and
